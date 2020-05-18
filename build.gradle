@@ -1,0 +1,35 @@
+plugins {
+    id 'java'
+}
+
+group 'org.example'
+version '1.0-SNAPSHOT'
+
+sourceCompatibility = 1.8
+
+repositories {
+    mavenCentral()
+}
+
+configurations {
+    isdk
+}
+
+dependencies {
+
+
+    compile group: 'com.appdynamics.agent', name: 'agent-api', version: '4.5.18.29239'
+
+    isdk group: 'com.appdynamics.agent', name: 'agent-api', version: '4.5.18.29239'
+
+}
+
+
+jar {
+    configurations.isdk.collect {
+        it.isDirectory() ? from(it) : from(zipTree(it)) {
+            include 'com/appdynamics/agent/api/AppdynamicsAgent.class'
+        }
+    }
+    includeEmptyDirs = false
+}
