@@ -7,16 +7,13 @@ import com.appdynamics.instrumentation.sdk.Rule;
 import com.appdynamics.instrumentation.sdk.SDKClassMatchType;
 import com.appdynamics.instrumentation.sdk.SDKStringMatchType;
 import com.appdynamics.instrumentation.sdk.template.AGenericInterceptor;
-import com.appdynamics.instrumentation.sdk.toolbox.reflection.IReflectionBuilder;
 import com.appdynamics.instrumentation.sdk.toolbox.reflection.IReflector;
 import com.appdynamics.instrumentation.sdk.toolbox.reflection.ReflectorException;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
-import static java.util.Collections.*;
+import static java.util.Collections.singletonList;
 
 public class StreamWRInterceptor extends AGenericInterceptor {
 
@@ -27,7 +24,7 @@ public class StreamWRInterceptor extends AGenericInterceptor {
     private IReflector accessProcessorContextReflector;
 
     public StreamWRInterceptor() {
-        accessProcessorContextReflector = getNewReflectionBuilder().accessFieldValue("processorContext", true)
+        accessProcessorContextReflector = getNewReflectionBuilder().accessFieldValue("context", true)
                 .build();
         recordContextReflector = getNewReflectionBuilder()
                 .invokeInstanceMethod("recordContext", true)
@@ -44,82 +41,91 @@ public class StreamWRInterceptor extends AGenericInterceptor {
 
     @Override
     public Object onMethodBegin(Object invokedObject, String className, String methodName, Object[] paramValues) {
-        getLogger().info("INTERCEPTOR BEGIN: " + className + "#" + methodName);
+        getLogger().info("CONSUMER-INTERCEPTOR BEGIN: " + className + "#" + methodName);
 
-        getLogger().info("Stack trace:");
-        for (StackTraceElement stackTraceElement : Thread.currentThread().getStackTrace()) {
-            getLogger().info(" " + stackTraceElement.toString());
-        }
+        Object processorContext = getProcessorContext(invokedObject);
 
-
-        try {
-
-            Object processorContext = accessProcessorContextReflector
-                    .execute(this.getClass().getClassLoader(), invokedObject, (Object[]) null);
-
-            getLogger().info("INTERCEPTOR Processor context is " + processorContext.getClass().getName() + " " + processorContext.toString());
-
-            if (processorContext == null) {
-                getLogger().warn("ProcessorContext is null");
-                return null;
-            }
-
-            getLogger().info("ProcessorContext is " + Integer.toHexString(System.identityHashCode(processorContext)));
-
-            Object recordContext = recordContextReflector
-                    .execute(this.getClass().getClassLoader(), processorContext, (Object[]) null);
-
-            if (recordContext == null) {
-                getLogger().warn("recordContext is null");
-                return null;
-            }
-
-
-
-            Object headers = headersReflector.execute(this.getClass().getClassLoader(), recordContext, (Object[]) null);
-
-            if (headers == null) {
-                getLogger().warn("headers is null");
-                return null;
-            } else {
-                getLogger().info("recordContext.headers " + headers.toString());
-            }
-
-            Object singularityHeader = lastHeaderReflector
-                    .execute(this.getClass().getClassLoader(), headers, new Object[]{"singularityheader"});
-
-            if (singularityHeader == null) {
-                getLogger().warn("Singularity header value is null");
-                return null;
-            } else {
-                getLogger().info("Singularity header found: " + singularityHeader);
-            }
-
-            Object headerValue = valueReflector
-                    .execute(this.getClass().getClassLoader(), singularityHeader, (Object[]) null);
-
-            if (headerValue instanceof byte[]) {
-                String stringHeaderValue = new String((byte[]) headerValue);
-                getLogger().info("INTERCEPTOR singularity Header String" + stringHeaderValue);
-
-                Transaction tx = AppdynamicsAgent.startTransaction("CustomInterceptor", stringHeaderValue, EntryTypes.POJO, true);
-                getLogger().info("Started transaction " + tx.getUniqueIdentifier());
-            } else {
-                getLogger().warn("Singularity header is not a byte[]??? " + headerValue);
-            }
-
-            getLogger().info("INTERCEPTOR singularity Header " + headerValue);
-
-        } catch (ReflectorException e) {
-            getLogger().error("INTERCEPTOR Reflection failed", e);
-        }
+        // ----
+        Optional.ofNullable(processorContext)
+                .map(pc -> getHeaders(pc))
+                .map(o -> getLastHeader(o))
+                .map(o -> getHeaderValue(o))
+                .map(o -> bytesToString(o))
+                .ifPresentOrElse(header -> {
+                    getLogger().info("Found singularity header " + header);
+                    startTransaction(header);
+                }, () -> {
+                    getLogger().warn("Singularity header not found.");
+                });
 
         return null;
     }
 
+    private void printStackTrace() {
+        getLogger().debug("Stack trace:");
+        for (StackTraceElement stackTraceElement : Thread.currentThread().getStackTrace()) {
+            getLogger().debug(" " + stackTraceElement.toString());
+        }
+    }
+
+    private void startTransaction(String stringHeaderValue) {
+        Transaction tx = AppdynamicsAgent.startTransaction("CustomInterceptor", stringHeaderValue, EntryTypes.POJO, true);
+        getLogger().info("Started transaction " + tx.getUniqueIdentifier());
+    }
+
+    private String bytesToString(Object bytes) {
+        if (bytes instanceof byte[]) {
+            return new String((byte[]) bytes);
+        } else {
+            return null;
+        }
+    }
+
+    private Object getHeaderValue(Object singularityHeader) {
+        try {
+            return valueReflector
+                    .execute(classLoader(), singularityHeader, (Object[]) null);
+        } catch (ReflectorException e) {
+            getLogger().error("Reflection failed", e);
+            return null;
+        }
+    }
+
+    private Object getLastHeader(Object headers) {
+        try {
+            return lastHeaderReflector
+                    .execute(classLoader(), headers, new Object[]{"singularityheader"});
+        } catch (ReflectorException e) {
+            getLogger().error("Reflection failed", e);
+            return null;
+        }
+    }
+
+    private Object getHeaders(Object processorContext) {
+        try {
+            return headersReflector.execute(classLoader(), processorContext, (Object[]) null);
+        } catch (ReflectorException e) {
+            getLogger().warn("Reflection error, unable to get Headers", e);
+            return null;
+        }
+    }
+
+    private Object getProcessorContext(Object invokedObject) {
+        try {
+            return accessProcessorContextReflector.execute(classLoader(), invokedObject, (Object[]) null);
+        } catch (ReflectorException e) {
+            getLogger().warn("Reflection error, unable to get ProcessorContext", e);
+            return null;
+        }
+    }
+
+    private ClassLoader classLoader() {
+        return this.getClass().getClassLoader();
+    }
+
     @Override
     public void onMethodEnd(Object state, Object invokedObject, String className, String methodName, Object[] paramValues, Throwable thrownException, Object returnValue) {
-        getLogger().info("INTERCEPTOR END: " + className + "#" + methodName);
+        getLogger().info("CONSUMER-INTERCEPTOR END: " + className + "#" + methodName);
 
         Transaction transaction = AppdynamicsAgent.getTransaction();
         if (transaction != null) {
@@ -133,18 +139,20 @@ public class StreamWRInterceptor extends AGenericInterceptor {
 
     @Override
     public List<Rule> initializeRules() {
-        Rule build = new Rule.Builder("org.apache.kafka.streams.processor.internals.StreamTask")
+        Rule build = new Rule.Builder("org.apache.kafka.streams.processor.internals.SourceNode")
                 .classMatchType(SDKClassMatchType.MATCHES_CLASS)
                 .classStringMatchType(SDKStringMatchType.EQUALS)
                 .methodMatchString("process")
                 .methodStringMatchType(SDKStringMatchType.EQUALS)
+                .withParams("java.lang.Object",
+                            "java.lang.Object")
 //                .atField("processorContext", true, 2)
 
 //                .isAbsoluteLineNumber(true)
 //                .atLineNumber(363)
 
-                .atMethodInvocation("updateProcessorContext", 1)
-                .isInstrumentBefore(false)
+//                .atMethodInvocation("updateProcessorContext", 1)
+//                .isInstrumentBefore(false)
 
 //                .atMethodInvocation("process", 1)
 //                .atLocalVariable("record", false, 1)
