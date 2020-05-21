@@ -21,6 +21,7 @@ public class SinkNodeWRInterceptor extends AGenericInterceptor {
     private final IReflector removeHeaderInvocation;
     private final IReflector setHeaderInvocation;
     private final IReflector getHeaderInvocation;
+    private final IReflector valueReflector;
 
     public SinkNodeWRInterceptor() {
         removeHeaderInvocation = getNewReflectionBuilder()
@@ -28,19 +29,22 @@ public class SinkNodeWRInterceptor extends AGenericInterceptor {
                 .build();
 
         setHeaderInvocation = getNewReflectionBuilder()
-                .invokeInstanceMethod("add", true, "java.lang.String", "byte[]")
+                .invokeInstanceMethod("add", true, "java.lang.String", "[B")
                 .build();
 
         getHeaderInvocation = getNewReflectionBuilder()
                 .invokeInstanceMethod("lastHeader", true, "java.lang.String")
                 .build();
 
+        valueReflector = getNewReflectionBuilder()
+                .invokeInstanceMethod("value", true).build();
+
     }
 
     @Override
     public Object onMethodBegin(Object invokedObject, String className, String methodName, Object[] paramValues) {
-        getLogger().info("Entering send()");
         String topicName = (String) paramValues[0];
+        getLogger().info("Entering " + methodName + "() on topic: " + topicName);
         Object headers = paramValues[3];
         if (headers == null) {
             getLogger().warn("ABORT: Headers argument is null for "+className+"#"+methodName);
@@ -63,23 +67,43 @@ public class SinkNodeWRInterceptor extends AGenericInterceptor {
 
         getLogger().info("Exit call singularity header: " + correlationHeader);
 
-        try {
-            Object currentSingularityHeader = getHeaderInvocation.execute(this.getClass().getClassLoader(), headers, new Object[]{"singularityheader"});
-            getLogger().info("Current singularity header: " + currentSingularityHeader);
-            removeHeaderInvocation.execute(this.getClass().getClassLoader(), headers, new Object[]{"singularityheader"});
-            getLogger().info("Setting new singularity header: " + correlationHeader);
-            setHeaderInvocation.execute(this.getClass().getClassLoader(), headers, new Object[]{"singularityheader", correlationHeader.getBytes()});
-        } catch (ReflectorException e) {
-            getLogger().error("ABORT: Reflection error", e);
-            e.printStackTrace();
+        if (correlationHeader != null) {
+            try {
+                Object currentSingularityHeader = getHeaderInvocation.execute(this.getClass().getClassLoader(), headers, new Object[]{"singularityheader"});
+                if (currentSingularityHeader != null) {
+                    Object value = valueReflector.execute(this.getClass().getClassLoader(), currentSingularityHeader, (Object[]) null);
+                    getLogger().info("Current singularity header: " + bytesToString(value));
+                } else {
+                    getLogger().info("Singularity header not found");
+                }
+
+                removeHeaderInvocation.execute(this.getClass().getClassLoader(), headers, new Object[]{"singularityheader"});
+                getLogger().info("Setting new singularity header: " + correlationHeader);
+                setHeaderInvocation.execute(this.getClass().getClassLoader(), headers, new Object[]{"singularityheader", correlationHeader.getBytes()});
+            } catch (ReflectorException e) {
+                getLogger().error("ABORT: Reflection error", e);
+                e.printStackTrace();
+            }
+        } else {
+            getLogger().warn("Not setting exit correlation header, because got null from ExitCall.");
         }
+
         return null;
     }
 
     @Override
     public void onMethodEnd(Object state, Object invokedObject, String className, String methodName, Object[] paramValues, Throwable thrownException, Object returnValue) {
-
+        getLogger().info("Leaving " + methodName + "()");
     }
+
+    private String bytesToString(Object bytes) {
+        if (bytes instanceof byte[]) {
+            return new String((byte[]) bytes);
+        } else {
+            return null;
+        }
+    }
+
 
     @Override
     public List<Rule> initializeRules() {
