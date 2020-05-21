@@ -13,9 +13,10 @@ import com.appdynamics.instrumentation.sdk.toolbox.reflection.ReflectorException
 import java.util.List;
 import java.util.Optional;
 
-import static java.util.Collections.singletonList;
-
 public class StreamWRInterceptor extends AGenericInterceptor {
+
+    private static final String UPDATE_PROCESSOR_CONTEXT_METHOD = "updateProcessorContext";
+    private static final String PROCESS_METHOD = "process";
 
     private final IReflector recordContextReflector;
     private final IReflector headersReflector;
@@ -43,8 +44,25 @@ public class StreamWRInterceptor extends AGenericInterceptor {
     public Object onMethodBegin(Object invokedObject, String className, String methodName, Object[] paramValues) {
         getLogger().info("CONSUMER-INTERCEPTOR BEGIN: " + className + "#" + methodName);
 
-        Object processorContext = getProcessorContext(invokedObject);
+        if (methodName.equals(UPDATE_PROCESSOR_CONTEXT_METHOD)) {
+            Optional.ofNullable(getHeaders(paramValues[0]))
+                    .map(o -> getLastHeader(o))
+                    .map(o -> getHeaderValue(o))
+                    .map(o -> bytesToString(o))
+                    .ifPresentOrElse(header -> {
+                        getLogger().info("Found singularity header " + header);
+                        startTransaction(header);
+                    }, () -> {
+                        getLogger().warn("Singularity header not found.");
+                    });
+        }
 
+
+        return null;
+    }
+
+    private void startTransactionFromSourceNode(Object invokedObject) {
+        Object processorContext = getProcessorContext(invokedObject);
         // ----
         Optional.ofNullable(processorContext)
                 .map(pc -> getHeaders(pc))
@@ -57,8 +75,6 @@ public class StreamWRInterceptor extends AGenericInterceptor {
                 }, () -> {
                     getLogger().warn("Singularity header not found.");
                 });
-
-        return null;
     }
 
     private void printStackTrace() {
@@ -127,6 +143,13 @@ public class StreamWRInterceptor extends AGenericInterceptor {
     public void onMethodEnd(Object state, Object invokedObject, String className, String methodName, Object[] paramValues, Throwable thrownException, Object returnValue) {
         getLogger().info("CONSUMER-INTERCEPTOR END: " + className + "#" + methodName);
 
+        if (methodName.equals(PROCESS_METHOD)) {
+            endTransaction();
+        }
+
+    }
+
+    private void endTransaction() {
         Transaction transaction = AppdynamicsAgent.getTransaction();
         if (transaction != null) {
             getLogger().info("Ending transaction " + transaction.getUniqueIdentifier());
@@ -136,31 +159,40 @@ public class StreamWRInterceptor extends AGenericInterceptor {
         }
     }
 
-
-    @Override
-    public List<Rule> initializeRules() {
-        Rule build = new Rule.Builder("org.apache.kafka.streams.processor.internals.SourceNode")
+    private Rule buildStreamTaskProcessRule() {
+        return new Rule.Builder("org.apache.kafka.streams.processor.internals.StreamTask")
                 .classMatchType(SDKClassMatchType.MATCHES_CLASS)
                 .classStringMatchType(SDKStringMatchType.EQUALS)
                 .methodMatchString("process")
                 .methodStringMatchType(SDKStringMatchType.EQUALS)
+                .build();
+    }
+
+    private Rule buildStreamTaskUpdateProcessorContextRule() {
+        return new Rule.Builder("org.apache.kafka.streams.processor.internals.StreamTask")
+                .classMatchType(SDKClassMatchType.MATCHES_CLASS)
+                .classStringMatchType(SDKStringMatchType.EQUALS)
+                .methodMatchString(UPDATE_PROCESSOR_CONTEXT_METHOD)
+                .withParams("org.apache.kafka.streams.processor.internals.StampedRecord",
+                            "org.apache.kafka.streams.processor.internals.ProcessorNode")
+                .methodStringMatchType(SDKStringMatchType.EQUALS)
+                .build();
+    }
+
+    private Rule buildSourceNodeProcessRule() {
+        return new Rule.Builder("org.apache.kafka.streams.processor.internals.SourceNode")
+                .classMatchType(SDKClassMatchType.MATCHES_CLASS)
+                .classStringMatchType(SDKStringMatchType.EQUALS)
+                .methodMatchString(PROCESS_METHOD)
+                .methodStringMatchType(SDKStringMatchType.EQUALS)
                 .withParams("java.lang.Object",
                             "java.lang.Object")
-//                .atField("processorContext", true, 2)
-
-//                .isAbsoluteLineNumber(true)
-//                .atLineNumber(363)
-
-//                .atMethodInvocation("updateProcessorContext", 1)
-//                .isInstrumentBefore(false)
-
-//                .atMethodInvocation("process", 1)
-//                .atLocalVariable("record", false, 1)
-
-//                .atLocalVariable("currNode", true, 1)
-
                 .build();
-
-        return singletonList(build);
     }
+
+    @Override
+    public List<Rule> initializeRules() {
+        return List.of(buildStreamTaskProcessRule(), buildStreamTaskUpdateProcessorContextRule());
+    }
+
 }
