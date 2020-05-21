@@ -43,18 +43,20 @@ public class SinkNodeWRInterceptor extends AGenericInterceptor {
         String topicName = (String) paramValues[0];
         Object headers = paramValues[3];
         if (headers == null) {
-            getLogger().warn("Headers argument is null for "+className+"#"+methodName);
+            getLogger().warn("ABORT: Headers argument is null for "+className+"#"+methodName);
             return null;
         }
 
         Transaction transaction = AppdynamicsAgent.getTransaction();
         if (transaction == null) {
-            getLogger().warn("Transaction is null.");
+            getLogger().warn("ABORT: Current transaction is null.");
             return null;
+        } else {
+            getLogger().info("Found transaction: " + transaction.getUniqueIdentifier());
         }
         ExitCall exitCall = transaction.startExitCall(topicName, topicName, "Kafka", false);
         if (exitCall == null) {
-            getLogger().warn("ExitCall is null.");
+            getLogger().warn("ABORT ExitCall is null.");
             return null;
         }
         String correlationHeader = exitCall.getCorrelationHeader();
@@ -65,9 +67,10 @@ public class SinkNodeWRInterceptor extends AGenericInterceptor {
             Object currentSingularityHeader = getHeaderInvocation.execute(this.getClass().getClassLoader(), headers, new Object[]{"singularityheader"});
             getLogger().info("Current singularity header: " + currentSingularityHeader);
             removeHeaderInvocation.execute(this.getClass().getClassLoader(), headers, new Object[]{"singularityheader"});
+            getLogger().info("Setting new singularity header: " + correlationHeader);
             setHeaderInvocation.execute(this.getClass().getClassLoader(), headers, new Object[]{"singularityheader", correlationHeader.getBytes()});
         } catch (ReflectorException e) {
-            getLogger().error("Reflection error", e);
+            getLogger().error("ABORT: Reflection error", e);
             e.printStackTrace();
         }
         return null;
