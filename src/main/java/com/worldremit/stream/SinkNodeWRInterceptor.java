@@ -13,39 +13,20 @@ import com.appdynamics.instrumentation.sdk.toolbox.reflection.IReflector;
 import com.appdynamics.instrumentation.sdk.toolbox.reflection.ReflectorException;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
 
 import static java.util.Collections.singletonList;
 
-public class SinkNodeWRInterceptor extends AGenericInterceptor {
-
-    private final IReflector removeHeaderInvocation;
-    private final IReflector setHeaderInvocation;
-    private final IReflector getHeaderInvocation;
-    private final IReflector valueReflector;
-
-    public SinkNodeWRInterceptor() {
-        removeHeaderInvocation = getNewReflectionBuilder()
-                .invokeInstanceMethod("remove", true, "java.lang.String")
-                .build();
-
-        setHeaderInvocation = getNewReflectionBuilder()
-                .invokeInstanceMethod("add", true, "java.lang.String", "[B")
-                .build();
-
-        getHeaderInvocation = getNewReflectionBuilder()
-                .invokeInstanceMethod("lastHeader", true, "java.lang.String")
-                .build();
-
-        valueReflector = getNewReflectionBuilder()
-                .invokeInstanceMethod("value", true).build();
-
-    }
+public class SinkNodeWRInterceptor extends WRInterceptor {
 
     @Override
     public Object onMethodBegin(Object invokedObject, String className, String methodName, Object[] paramValues) {
         String topicName = (String) paramValues[0];
-        getLogger().info("Entering " + methodName + "() on topic: " + topicName);
         Object headers = paramValues[3];
+
+        getLogger().info("Entering " + methodName + "() on topic: " + topicName);
+
         if (headers == null) {
             getLogger().warn("ABORT: Headers argument is null for "+className+"#"+methodName);
             return null;
@@ -58,24 +39,21 @@ public class SinkNodeWRInterceptor extends AGenericInterceptor {
         } else {
             getLogger().info("Found transaction: " + transaction.getUniqueIdentifier());
         }
+
         ExitCall exitCall = transaction.startExitCall(topicName, topicName, "Kafka", false);
         if (exitCall == null) {
-            getLogger().warn("ABORT ExitCall is null.");
+            getLogger().warn("ABORT: ExitCall is null.");
             return null;
         }
         String correlationHeader = exitCall.getCorrelationHeader();
-
-        getLogger().info("Exit call singularity header: " + correlationHeader);
-
+        getLogger().info("Singularity header to be set: " + correlationHeader);
         if (correlationHeader != null) {
             try {
-                Object currentSingularityHeader = getHeaderInvocation.execute(this.getClass().getClassLoader(), headers, new Object[]{"singularityheader"});
-                if (currentSingularityHeader != null) {
-                    Object value = valueReflector.execute(this.getClass().getClassLoader(), currentSingularityHeader, (Object[]) null);
-                    getLogger().info("Current singularity header: " + bytesToString(value));
-                } else {
-                    getLogger().info("Singularity header not found");
-                }
+                Optional.ofNullable(invokeGetSingularityHeader(headers))
+                        .map(safeReflector(this::invokeGetValue))
+                        .map(this::bytesToString)
+                        .ifPresentOrElse(s -> getLogger().info("Curent singularity header: " + s),
+                                         () -> getLogger().warn("Singularity header not found"));
 
                 removeHeaderInvocation.execute(this.getClass().getClassLoader(), headers, new Object[]{"singularityheader"});
                 getLogger().info("Setting new singularity header: " + correlationHeader);
@@ -85,7 +63,7 @@ public class SinkNodeWRInterceptor extends AGenericInterceptor {
                 e.printStackTrace();
             }
         } else {
-            getLogger().warn("Not setting exit correlation header, because got null from ExitCall.");
+            getLogger().warn("Not setting exit singularity header, because got null from ExitCall.");
         }
 
         return exitCall;
@@ -101,14 +79,6 @@ public class SinkNodeWRInterceptor extends AGenericInterceptor {
             exitCall.end();
         } else {
             getLogger().warn("ExitCall not received from onMethodBegin()");
-        }
-    }
-
-    private String bytesToString(Object bytes) {
-        if (bytes instanceof byte[]) {
-            return new String((byte[]) bytes);
-        } else {
-            return null;
         }
     }
 
