@@ -2,6 +2,7 @@ package com.worldremit.stream;
 
 import com.appdynamics.agent.api.AppdynamicsAgent;
 import com.appdynamics.agent.api.EntryTypes;
+import com.appdynamics.agent.api.ExitCall;
 import com.appdynamics.agent.api.Transaction;
 import com.appdynamics.instrumentation.sdk.Rule;
 import com.appdynamics.instrumentation.sdk.SDKClassMatchType;
@@ -44,6 +45,12 @@ public class StreamWRInterceptor extends AGenericInterceptor {
     public Object onMethodBegin(Object invokedObject, String className, String methodName, Object[] paramValues) {
         getLogger().info("CONSUMER-INTERCEPTOR BEGIN: " + className + "#" + methodName);
 
+        startTransactionFromSourceNode(invokedObject);
+
+        return this;
+    }
+
+    private void startTransactionFromUpdateProcessorContext(String methodName, Object[] paramValues) {
         if (methodName.equals(UPDATE_PROCESSOR_CONTEXT_METHOD)) {
             Optional.ofNullable(getHeaders(paramValues[0]))
                     .map(o -> getLastHeader(o))
@@ -56,9 +63,6 @@ public class StreamWRInterceptor extends AGenericInterceptor {
                         getLogger().warn("Singularity header not found.");
                     });
         }
-
-
-        return null;
     }
 
     private void startTransactionFromSourceNode(Object invokedObject) {
@@ -85,7 +89,11 @@ public class StreamWRInterceptor extends AGenericInterceptor {
     }
 
     private void startTransaction(String stringHeaderValue) {
-        Transaction tx = AppdynamicsAgent.startTransaction("CustomInterceptor", stringHeaderValue, EntryTypes.POJO, true);
+        Transaction tx = AppdynamicsAgent.startTransaction("CustomInterceptor", stringHeaderValue, EntryTypes.POJO, false);
+        ExitCall exitCall = tx.startExitCall("Dummy", "Dummy", "Kafka", false);
+        getLogger().info("Exitcall.getCorrelationHeader:" + exitCall.getCorrelationHeader());
+        exitCall.end();
+
         getLogger().info("Started transaction " + tx.getUniqueIdentifier());
     }
 
@@ -192,7 +200,7 @@ public class StreamWRInterceptor extends AGenericInterceptor {
 
     @Override
     public List<Rule> initializeRules() {
-        return List.of(buildStreamTaskProcessRule(), buildStreamTaskUpdateProcessorContextRule());
+        return List.of(buildSourceNodeProcessRule());
     }
 
 }

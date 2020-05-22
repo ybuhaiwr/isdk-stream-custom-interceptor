@@ -88,12 +88,20 @@ public class SinkNodeWRInterceptor extends AGenericInterceptor {
             getLogger().warn("Not setting exit correlation header, because got null from ExitCall.");
         }
 
-        return null;
+        return exitCall;
     }
 
     @Override
     public void onMethodEnd(Object state, Object invokedObject, String className, String methodName, Object[] paramValues, Throwable thrownException, Object returnValue) {
         getLogger().info("Leaving " + methodName + "()");
+        if (state != null) {
+            getLogger().info("Exit call is: " + state.getClass().getName());
+            ExitCall exitCall = (ExitCall) state;
+            getLogger().info("Ending ExitCall, correlation header: " + exitCall.getCorrelationHeader());
+            exitCall.end();
+        } else {
+            getLogger().warn("ExitCall not received from onMethodBegin()");
+        }
     }
 
     private String bytesToString(Object bytes) {
