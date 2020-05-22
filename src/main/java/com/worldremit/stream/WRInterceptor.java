@@ -121,15 +121,12 @@ public abstract class WRInterceptor extends AGenericInterceptor {
      * @return
      */
     public <T,R> Function<T,R> safeReflector(UnsafeReflectorFunction<T,R> function) {
-        return new Function<T, R>() {
-            @Override
-            public R apply(T t) {
-                try {
-                    return function.apply(t);
-                } catch (ReflectorException e) {
-                    getLogger().error("Reflection error: ", e);
-                    return null;
-                }
+        return t -> {
+            try {
+                return function.apply(t);
+            } catch (ReflectorException e) {
+                getLogger().error("Reflection error: ", e);
+                return null;
             }
         };
     }

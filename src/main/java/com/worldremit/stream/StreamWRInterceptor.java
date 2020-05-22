@@ -7,8 +7,6 @@ import com.appdynamics.agent.api.Transaction;
 import com.appdynamics.instrumentation.sdk.Rule;
 import com.appdynamics.instrumentation.sdk.SDKClassMatchType;
 import com.appdynamics.instrumentation.sdk.SDKStringMatchType;
-import com.appdynamics.instrumentation.sdk.toolbox.reflection.IReflector;
-import com.appdynamics.instrumentation.sdk.toolbox.reflection.ReflectorException;
 
 import java.util.List;
 import java.util.Optional;
@@ -30,20 +28,13 @@ public class StreamWRInterceptor extends WRInterceptor {
                 .map(this::invokeGetLastHeader)
                 .map(this::invokeGetHeaderValue)
                 .map(this::bytesToString)
-                .ifPresentOrElse(header -> {
-                    getLogger().info("Found singularity header " + header);
-                    startTransaction(header);
-                }, () -> {
-                    getLogger().warn("Singularity header not found.");
-                });
+                .ifPresentOrElse(this::startTransaction,
+                                 () -> getLogger().warn("Singularity header not found."));
     }
 
     private void startTransaction(String stringHeaderValue) {
+        getLogger().info("Found singularity header " + stringHeaderValue);
         Transaction tx = AppdynamicsAgent.startTransaction("CustomInterceptor", stringHeaderValue, EntryTypes.POJO, false);
-        ExitCall exitCall = tx.startExitCall("Dummy", "Dummy", "Kafka", false);
-        getLogger().info("Exitcall.getCorrelationHeader:" + exitCall.getCorrelationHeader());
-        exitCall.end();
-
         getLogger().info("Started transaction " + tx.getUniqueIdentifier());
     }
 

@@ -2,19 +2,14 @@ package com.worldremit.stream;
 
 import com.appdynamics.agent.api.AppdynamicsAgent;
 import com.appdynamics.agent.api.ExitCall;
-import com.appdynamics.agent.api.ExitTypes;
 import com.appdynamics.agent.api.Transaction;
 import com.appdynamics.instrumentation.sdk.Rule;
 import com.appdynamics.instrumentation.sdk.SDKClassMatchType;
 import com.appdynamics.instrumentation.sdk.SDKStringMatchType;
-import com.appdynamics.instrumentation.sdk.template.AGenericInterceptor;
-import com.appdynamics.instrumentation.sdk.toolbox.reflection.IReflectionBuilder;
-import com.appdynamics.instrumentation.sdk.toolbox.reflection.IReflector;
 import com.appdynamics.instrumentation.sdk.toolbox.reflection.ReflectorException;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.function.Function;
 
 import static java.util.Collections.singletonList;
 
